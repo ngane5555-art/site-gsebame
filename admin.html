@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin GSEBAM</title>
+  <!-- Librairie Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    /* Design simple et propre pour l'admin */
+    body { font-family: sans-serif; background: #f1f5f9; padding: 20px; max-width: 600px; margin: 0 auto; }
+    .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    h2 { color: #1e3a8a; text-align: center; }
+    input, select, button { width: 100%; padding: 10px; margin: 5px 0 15px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+    button { background: #1e3a8a; color: white; border: none; cursor: pointer; font-weight: bold; }
+    button:hover { background: #172554; }
+    .hidden { display: none; }
+    .item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding: 10px 0; }
+    .btn-delete { background: #ef4444; width: auto; padding: 5px 10px; font-size: 12px; }
+  </style>
+</head>
+<body>
+
+  <h1>🔐 Administration GSEBAM</h1>
+
+  <!-- 1. Écran de Connexion -->
+  <div id="login-screen" class="card">
+    <h2>Connexion</h2>
+    <input type="email" id="email" placeholder="Email (ex: admin@gsebam.sn)">
+    <input type="password" id="password" placeholder="Mot de passe">
+    <button onclick="login()">Se connecter</button>
+    <p id="msg-login" style="color:red; text-align:center;"></p>
+  </div>
+
+  <!-- 2. Écran d'Upload (Caché tant qu'on est pas connecté) -->
+  <div id="admin-panel" class="hidden">
+    <div class="card">
+      <h2>Ajouter du contenu</h2>
+      <input type="text" id="titre" placeholder="Titre (ex: Rentrée 2025)">
+      <select id="type">
+        <option value="photo">📷 Photo</option>
+        <option value="video">🎥 Vidéo</option>
+        <option value="document"> Document</option>
+      </select>
+      <select id="categorie">
+        <option value="galerie">Galerie</option>
+        <option value="cours">Cours</option>
+      </select>
+      <input type="file" id="fichier">
+      <button onclick="upload()">🚀 Envoyer sur le site</button>
+      <p id="msg-upload" style="text-align:center; font-weight:bold;"></p>
+    </div>
+
+    <div class="card">
+      <h2>Fichiers en ligne</h2>
+      <div id="liste-fichiers">Chargement...</div>
+      <button onclick="logout()" style="background:#64748b; margin-top:20px;">🚪 Déconnexion</button>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // ⚙️ CONFIGURATION : COLLE TES CLÉS SUPABASE ICI
+    // ============================================================
+    const SUPABASE_URL = 'https://mdlljjwcrnlsitweoldo.supabase.co/rest/v1/'; 
+    const SUPABASE_KEY = 'sb_publishable_MXKg8Tvstprkt9QHuAoZXQ_EtGahhAd';
+    // ============================================================
+
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // Vérifier si déjà connecté
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) { showAdmin(); }
+    });
+
+    // Fonction Connexion
+    async function login() {
+      const email = document.getElementById('email').value;
+      const pass = document.getElementById('password').value;
+      const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+      
+      if (error) {
+        document.getElementById('msg-login').innerText = "Erreur: " + error.message;
+      } else {
+        showAdmin();
+      }
+    }
+
+    function showAdmin() {
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('admin-panel').classList.remove('hidden');
+      loadFiles();
+    }
+
+    function logout() {
+      supabase.auth.signOut();
+      location.reload();
+    }
+
+    // Fonction Upload
+    async function upload() {
+      const titre = document.getElementById('titre').value;
+      const type = document.getElementById('type').value;
+      const cat = document.getElementById('categorie').value;
+      const file = document.getElementById('fichier').files[0];
+      const msg = document.getElementById('msg-upload');
+
+      if (!titre || !file) return msg.innerText = " Remplis le titre et choisis un fichier.";
+      msg.innerText = "⏳ Envoi en cours...";
+
+      // 1. Upload fichier
+      const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { error: uploadError } = await supabase.storage.from('medias').upload(fileName, file);
+      
+      if (uploadError) return msg.innerText = "❌ Erreur upload.";
+
+      // 2. Récupérer URL
+      const { data } = supabase.storage.from('medias').getPublicUrl(fileName);
+      
+      // 3. Enregistrer dans Base de données
+      const { error: dbError } = await supabase.from('contenu').insert([
+        { titre: titre, type: type, categorie: cat, url: data.publicUrl }
+      ]);
+
+      if (dbError) msg.innerText = "❌ Erreur base de données.";
+      else {
+        msg.innerText = "✅ Ajouté avec succès !";
+        document.getElementById('titre').value = ""; // Vider le titre
+        loadFiles(); // Rafraichir la liste
+      }
+    }
+
+    // Fonction Afficher la liste
+    async function loadFiles() {
+      const div = document.getElementById('liste-fichiers');
+      const { data } = await supabase.from('contenu').select('*').order('created_at', { ascending: false });
+      
+      div.innerHTML = "";
+      data.forEach(item => {
+        div.innerHTML += `
+          <div class="item">
+            <span><b>${item.titre}</b> (${item.type})</span>
+            <button class="btn-delete" onclick="deleteFile('${item.id}')">️</button>
+          </div>
+        `;
+      });
+    }
+
+    // Fonction Supprimer
+    async function deleteFile(id) {
+      if(confirm("Supprimer ce fichier ?")) {
+        await supabase.from('contenu').delete().eq('id', id);
+        loadFiles();
+      }
+    }
+  </script>
+</body>
+</html>
